@@ -128,17 +128,14 @@ static void* extend_heap(size_t words){
 	size_t size;
 
 	size = allocate_even_number_for_allignment(words);
-	printf("size is: %d", size);
 
-	if ( (int) (bp = mem_sbrk(size)) < 0){
-		printf("bp is %x", bp);
+	if ((bp = mem_sbrk(size)) == NULL){
 		return NULL;
 	}
-	printf("extended");
 
     	PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(size, 0));
     	PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(size, 0));
-    	PUT_VAL_AT_PTR(HEADER_OF_BP(NEXT_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size, 1));
+    	PUT_VAL_AT_PTR(HEADER_OF_BP(NEXT_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(0, 1));
 
 	return coalesce_free_blk(bp);
 }
@@ -218,26 +215,18 @@ void mm_free(void *bp)
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size)
+void *mm_realloc(void *oldptr, size_t size)
 {
-    void *oldptr = ptr;
     void *newptr;
-    size_t adjusted_size = ALIGN(size + OVERHEAD);
-    size_t copySize = GET_SIZE(HEADER_OF_BP(ptr));
+    //size_t adjusted_size = ALIGN(size + OVERHEAD);
+    size_t copySize = GET_SIZE(HEADER_OF_BP(oldptr));
 
-    if (adjusted_size == copySize)
-	    return ptr;
-    else if (adjusted_size < copySize)
-	    place_requested_blk(ptr, size);
-    else{
-    
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    memcpy(newptr, oldptr, copySize);
+    memcpy(newptr, oldptr,MIN( copySize,size));
     mm_free(oldptr);
     return newptr;
-    }
 }
 
 
