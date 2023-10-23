@@ -53,6 +53,9 @@
 #define NEXT_BLK_PTR(ptr) ((char *)(ptr) + GET_SIZE((char *)(ptr) - WORDSIZE))
 #define PREV_BLK_PTR(ptr) ((char *)(ptr) - GET_SIZE((char *)(ptr) - DWORDSIZE))
 
+#define NEXT_FREE(bp) (*(void **)(bp))
+#define PREV_FREE(bp) (*(void **)(bp + WORDSIZE))
+
 static void* free_list_ptr = NULL;
 
 /* functions */
@@ -63,12 +66,45 @@ static inline size_t allocate_even_number_for_allignment(size_t words);
 static void* coalesce_free_blk(void* bp);
 static void* extend_heap(size_t words);
 
+static void remove_free_from_explicit_list(void* bp){
+	void* next = NEXT_FREE(bp);
+	void* prev = PREV_FREE(bp);
+
+	if (next == NULL && prev == NULL){
+		free_list_ptr = NULL;	// there is no more free block anymore!
+	}
+	else if (next != NULL && prev == NULL){
+		PREV_FREE(next) = NULL;
+		free_list_ptr = next;
+	}
+	else if (next == NULL && prev != NULL){
+		NEXT_FREE(prev) = NULL;
+	}
+	else /* if (next == NULL && prev == NULL) */{
+		NEXT_FREE(prev) = next;
+		PREV_FREE(next) = prev;
+	}
+}
+
+static void add_bp_to_free_list(void* bp){ // LIFO
+	if (free_list_ptr == NULL){
+		free_list_ptr = bp;
+		NEXT_FREE(bp) = NULL;
+		PREV_FREE(bp) = NULL;
+	}
+	else{
+		NEXT_FREE(bp) = free_list_ptr;
+  		PREV_FREE(free_list_ptr) = bp;
+  		PREV_FREE(bp) = NULL;
+  		free_list_ptr = bp;
+	}
+}
+
 
 static void* find_first_fit(size_t adjusted_size){
 	void* bp;
-	for (bp = heap_list_ptr; GET_SIZE(HEADER_OF_BP(bp)) > 0; bp = NEXT_BLK_PTR(bp)){
-		size_t header = HEADER_OF_BP(bp);
-		if (!GET_ALLOC(header) && (GET_SIZE(header) >= adjusted_size))
+	for (bp = free_list_ptr; bp != NULL; bp = NEXT_FREE(bp)){
+		if (GET_SIZE(HEADER_OF_BP(bp)) >= adjusted_size)
 			return bp;
 	}
 	return NULL;
@@ -77,60 +113,61 @@ static void* find_first_fit(size_t adjusted_size){
 static void place_and_split_free_blk(void* bp, size_t adjusted_size, size_t free_size){
 	PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(adjusted_size, 1));
 	PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(adjusted_size, 1));
+	remove_free_from_explicit_list(bp);
+
 	bp = NEXT_BLK_PTR(bp);
 	PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(free_size - adjusted_size, 0));
 	PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(free_size - adjusted_size, 0));
+	coalesce_free_blk(bp);
 }
 
 static void place_requested_blk(void* bp, size_t adjusted_size){
 	size_t free_size = GET_SIZE(HEADER_OF_BP(bp));
-	if ((free_size - adjusted_size) >= (OVERHEAD + ALIGNMENT)){
+	if ((free_size - adjusted_size) >= MIN_BLK_SIZE){
 		place_and_split_free_blk(bp, adjusted_size, free_size);
 	}
 	else{
 		PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(free_size, 1));
 		PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(free_size, 1));
+		remove_free_from_explicit_list(bp);
 	}
 }
 
-
-
-static inline size_t allocate_even_number_for_allignment(size_t words){
-	return (words % 2) ? (words + 1) * WORDSIZE : words * WORDSIZE;
-}
 
 static void* coalesce_free_blk(void* bp){
     size_t prev_alloc = GET_ALLOC(FOOTER_OF_PREV_BP(bp)); 
     size_t next_alloc = GET_ALLOC(HEADER_OF_BP(NEXT_BLK_PTR(bp))); 
     size_t size =  GET_SIZE(HEADER_OF_BP(bp));
 
-    if (prev_alloc && next_alloc){ // case 1 
-        return bp; 
-    }
-    else if (prev_alloc && !next_alloc){ // case2 
+    if (prev_alloc && !next_alloc){ // case2 
         size += GET_SIZE(HEADER_OF_BP(NEXT_BLK_PTR(bp))); 
+	remove_free_from_explicit_list(NEXT_BLK_PTR(bp));
         PUT_VAL_AT_PTR(HEADER_OF_BP(bp),CONCAT_SIZE_ALLOC(size,0));
         PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(size,0)); 
     }
     else if(!prev_alloc && next_alloc){ // case 3  
         size+= GET_SIZE(FOOTER_OF_PREV_BP(bp)); 
         PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(size,0)); 
-        PUT_VAL_AT_PTR(HEADER_OF_BP(PREV_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0)); 
         bp = PREV_BLK_PTR(bp); 
+        PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(size,0)); 
+	remove_free_from_explicit_list(bp);
     }
-    else { // case 4
+    else if (!prev_alloc && !next_alloc){ // case 4
         size+= GET_SIZE(FOOTER_OF_PREV_BP(bp)) + GET_SIZE(FOOTER_OF_BP(NEXT_BLK_PTR(bp))); 
+	remove_free_from_explicit_list(PREV_BLK_PTR(bp));
+	remove_free_from_explicit_list(NEXT_BLK_PTR(bp));
         PUT_VAL_AT_PTR(HEADER_OF_BP(PREV_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0));
         PUT_VAL_AT_PTR(FOOTER_OF_BP(NEXT_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0)); 
         bp = PREV_BLK_PTR(bp);
     }
+    
+    add_bp_to_free_list(bp);
+
     return bp;
 }
-static void* extend_heap(size_t words){
+static void* extend_heap(size_t size){
 	char* bp;
-	size_t size;
 
-	size = allocate_even_number_for_allignment(words);
 
 	if ((bp = mem_sbrk(size)) == NULL){
 		return NULL;
@@ -158,8 +195,8 @@ int mm_init(void)
     PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue header
     PUT_VAL_AT_PTR(heap_list_ptr + 2*WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue footer
     PUT_VAL_AT_PTR(heap_list_ptr + 3*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk header
-    PUT_VAL_AT_PTR(heap_list_ptr + 4*WORDSIZE, 0); // predecessor
-    PUT_VAL_AT_PTR(heap_list_ptr + 5*WORDSIZE, 0); // successor
+    PUT_VAL_AT_PTR(heap_list_ptr + 4*WORDSIZE, 0); // NEXT: NULL
+    PUT_VAL_AT_PTR(heap_list_ptr + 5*WORDSIZE, 0); // PREV: NULL
     PUT_VAL_AT_PTR(heap_list_ptr + 6*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk footer
     PUT_VAL_AT_PTR(heap_list_ptr + 7*WORDSIZE, CONCAT_SIZE_ALLOC(0, 1)); // epilogue footer
 
@@ -174,22 +211,9 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-	/*
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-	return NULL;
-    else {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
-    }
-    */
 	size_t adjusted_blk_size;
 	size_t extendsize;
 	char* bp;
-
-	if (size <= 0)
-		return NULL;
 
 	adjusted_blk_size = ALIGN(size + OVERHEAD);
 
@@ -199,7 +223,7 @@ void *mm_malloc(size_t size)
 	}
 
 	extendsize = MAX(adjusted_blk_size, CHUNKSIZE);
-	if ((bp = extend_heap(extendsize/WORDSIZE)) == NULL)
+	if ((bp = extend_heap(extendsize)) == NULL)
 		return NULL;
 	place_requested_blk(bp, adjusted_blk_size);
 	return bp;
