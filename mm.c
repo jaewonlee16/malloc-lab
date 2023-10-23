@@ -31,7 +31,7 @@
 
 #define WORDSIZE 4
 #define DWORDSIZE 8
-#define CHUNKSIZE (1<<5)
+#define CHUNKSIZE (1<<10)
 #define OVERHEAD 8
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y)) 
@@ -46,6 +46,8 @@
 
 #define HEADER_OF_BP(ptr) ((char *)(ptr) - WORDSIZE)
 #define FOOTER_OF_BP(ptr) ((char *)(ptr) + GET_SIZE(HEADER_OF_BP(ptr)) - DWORDSIZE)
+#define FOOTER_OF_PREV_BP(ptr) ((char *)(ptr) - DWORDSIZE)
+
 
 #define NEXT_BLK_PTR(ptr) ((char *)(ptr) + GET_SIZE((char *)(ptr) - WORDSIZE))
 #define PREV_BLK_PTR(ptr) ((char *)(ptr) - GET_SIZE((char *)(ptr) - DWORDSIZE))
@@ -97,7 +99,7 @@ static inline size_t allocate_even_number_for_allignment(size_t words){
 }
 
 static void* coalesce_free_blk(void* bp){
-    size_t prev_alloc = GET_ALLOC(FOOTER_OF_BP(PREV_BLK_PTR(bp))); 
+    size_t prev_alloc = GET_ALLOC(FOOTER_OF_PREV_BP(bp)); 
     size_t next_alloc = GET_ALLOC(HEADER_OF_BP(NEXT_BLK_PTR(bp))); 
     size_t size =  GET_SIZE(HEADER_OF_BP(bp));
 
@@ -110,13 +112,13 @@ static void* coalesce_free_blk(void* bp){
         PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(size,0)); 
     }
     else if(!prev_alloc && next_alloc){ // case 3  
-        size+= GET_SIZE(HEADER_OF_BP(PREV_BLK_PTR(bp))); 
+        size+= GET_SIZE(FOOTER_OF_PREV_BP(bp)); 
         PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(size,0)); 
         PUT_VAL_AT_PTR(HEADER_OF_BP(PREV_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0)); 
         bp = PREV_BLK_PTR(bp); 
     }
     else { // case 4
-        size+= GET_SIZE(HEADER_OF_BP(PREV_BLK_PTR(bp))) + GET_SIZE(FOOTER_OF_BP(NEXT_BLK_PTR(bp))); 
+        size+= GET_SIZE(FOOTER_OF_PREV_BP(bp)) + GET_SIZE(FOOTER_OF_BP(NEXT_BLK_PTR(bp))); 
         PUT_VAL_AT_PTR(HEADER_OF_BP(PREV_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0));
         PUT_VAL_AT_PTR(FOOTER_OF_BP(NEXT_BLK_PTR(bp)), CONCAT_SIZE_ALLOC(size,0)); 
         bp = PREV_BLK_PTR(bp);
@@ -156,7 +158,6 @@ int mm_init(void)
     heap_list_ptr += DWORDSIZE;
 
     if (extend_heap(CHUNKSIZE / WORDSIZE) == NULL){
-	    printf("why??????");
     	return -1;
     }
 
