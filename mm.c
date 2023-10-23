@@ -33,6 +33,7 @@
 #define DWORDSIZE 8
 #define CHUNKSIZE (1<<10)
 #define OVERHEAD 8
+#define MIN_BLK_SIZE 16
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y)) 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
@@ -52,7 +53,7 @@
 #define NEXT_BLK_PTR(ptr) ((char *)(ptr) + GET_SIZE((char *)(ptr) - WORDSIZE))
 #define PREV_BLK_PTR(ptr) ((char *)(ptr) - GET_SIZE((char *)(ptr) - DWORDSIZE))
 
-static void* heap_list_ptr = NULL;
+static void* free_list_ptr = NULL;
 
 /* functions */
 static void* find_first_fit(size_t adjusted_size);
@@ -147,19 +148,22 @@ static void* extend_heap(size_t words){
  */
 int mm_init(void)
 {
-    if((heap_list_ptr = mem_sbrk(4*WORDSIZE)) == NULL){
+    static void* heap_list_ptr = NULL;
+
+    if((heap_list_ptr = mem_sbrk(8*WORDSIZE)) == NULL){
 	    return -1;
     }
 
-    PUT_VAL_AT_PTR(heap_list_ptr, 0);
-    PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1));
-    PUT_VAL_AT_PTR(heap_list_ptr + DWORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1));
-    PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE + DWORDSIZE, CONCAT_SIZE_ALLOC(0, 1));
-    heap_list_ptr += DWORDSIZE;
+    PUT_VAL_AT_PTR(heap_list_ptr, 0); //padding
+    PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue header
+    PUT_VAL_AT_PTR(heap_list_ptr + 2*WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue footer
+    PUT_VAL_AT_PTR(heap_list_ptr + 3*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk header
+    PUT_VAL_AT_PTR(heap_list_ptr + 4*WORDSIZE, 0); // predecessor
+    PUT_VAL_AT_PTR(heap_list_ptr + 5*WORDSIZE, 0); // successor
+    PUT_VAL_AT_PTR(heap_list_ptr + 6*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk footer
+    PUT_VAL_AT_PTR(heap_list_ptr + 7*WORDSIZE, CONCAT_SIZE_ALLOC(0, 1)); // epilogue footer
 
-    if (extend_heap(CHUNKSIZE / WORDSIZE) == NULL){
-    	return -1;
-    }
+    free_list_ptr = heap_list_ptr + 4*WORDSIZE;
 
     return 0;
 }
