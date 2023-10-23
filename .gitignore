@@ -33,6 +33,7 @@
 *.dylib
 
 # Executables
+mdriver
 *.exe
 *.out
 *.app
