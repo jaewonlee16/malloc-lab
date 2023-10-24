@@ -31,7 +31,7 @@
 
 #define WORDSIZE 4
 #define DWORDSIZE 8
-#define CHUNKSIZE (1<<8)
+#define CHUNKSIZE (1<<12)
 #define OVERHEAD 8
 #define MIN_BLK_SIZE 16
 
@@ -58,6 +58,7 @@
 
 static void* free_list_ptr = NULL;
 static unsigned int min_free_size = 99999999;
+static unsigned int real_best_min_free_size = 99999999;
 
 /* functions */
 static void* find_first_fit(size_t adjusted_size);
@@ -114,15 +115,29 @@ static void* find_first_fit(size_t adjusted_size){
 
 static void* find_best_fit(size_t adjusted_size){
 	void* bp;
-	void* result = NULL;
+	void* best_result = NULL;
+	void* second_best_result = NULL;
+	size_t bp_size;
 	for (bp = free_list_ptr; bp != NULL; bp = NEXT_FREE(bp)){
-		if (GET_SIZE(HEADER_OF_BP(bp)) >= adjusted_size && GET_SIZE(HEADER_OF_BP(bp)) < min_free_size){
-			min_free_size = GET_SIZE(HEADER_OF_BP(bp));
-			result = bp;
+		if((bp_size = GET_SIZE(HEADER_OF_BP(bp))) == adjusted_size){
+			best_result = bp;
+			break;
 		}
+		if (bp_size > adjusted_size && bp_size < min_free_size){
+			min_free_size = bp_size;
+			second_best_result = bp;
+		}
+		if (bp_size >= (adjusted_size + MIN_BLK_SIZE) && bp_size < real_best_min_free_size){ // because free space can be splitted
+			real_best_min_free_size = bp_size;
+			best_result = bp;
+		}
+		
 	}
 	min_free_size = 99999999;
-	return result;
+	real_best_min_free_size = 99999999;
+	if (best_result != NULL)
+		return best_result;
+	return second_best_result;
 	
 }
 
