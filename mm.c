@@ -65,7 +65,6 @@ static void* find_first_fit(size_t adjusted_size);
 static void* find_best_fit(size_t adjusted_size);
 static void place_and_split_free_blk(void* bp, size_t adjusted_size, size_t free_size);
 static void place_requested_blk(void* bp, size_t adjusted_size);
-static inline size_t allocate_even_number_for_allignment(size_t words);
 static void* coalesce_free_blk(void* bp);
 static void* extend_heap(size_t words);
 
@@ -279,17 +278,43 @@ void mm_free(void *bp)
  */
 void *mm_realloc(void *oldptr, size_t size)
 {
-    void *newptr;
-    //size_t adjusted_size = ALIGN(size + OVERHEAD);
-    size_t copySize = GET_SIZE(HEADER_OF_BP(oldptr));
+	void *newptr;
+	size_t old_size = GET_SIZE(HEADER_OF_BP(oldptr));
+	size_t adjusted_blk_size = ALIGN(size + OVERHEAD);
+	size_t merged_size = old_size + GET_SIZE(HEADER_OF_BP(NEXT_BLK_PTR(oldptr)));
+	void* bp;
+	if (adjusted_blk_size == old_size)
+		return oldptr;
+	else if (adjusted_blk_size < old_size && (old_size - adjusted_blk_size) >= MIN_BLK_SIZE){
+		PUT_VAL_AT_PTR(HEADER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+		PUT_VAL_AT_PTR(FOOTER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
 
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-      return NULL;
-    memcpy(newptr, oldptr,MIN( copySize,size));
-    mm_free(oldptr);
-    return newptr;
+		bp = NEXT_BLK_PTR(oldptr);
+		PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(old_size - adjusted_blk_size, 0));
+		PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(old_size - adjusted_blk_size, 0));
+		coalesce_free_blk(bp);
+		return oldptr;
+    	}
+	else if (adjusted_blk_size > old_size && !GET_ALLOC(HEADER_OF_BP(NEXT_BLK_PTR(oldptr))) 
+			&& merged_size >= adjusted_blk_size){
+		remove_free_from_explicit_list(NEXT_BLK_PTR(oldptr));
+      		PUT_VAL_AT_PTR(HEADER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+      		PUT_VAL_AT_PTR(FOOTER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+      		bp = NEXT_BLK_PTR(oldptr);
+      		PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(merged_size - adjusted_blk_size, 1));
+      		PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(merged_size - adjusted_blk_size, 1));
+      		mm_free(bp);
+      		return oldptr;
+	}
+
+    	newptr = mm_malloc(size);
+    	if (newptr == NULL)
+      		return NULL;
+    	memcpy(newptr, oldptr,MIN( old_size,size));
+    	mm_free(oldptr);
+    	return newptr;
 }
+
 
 
 
