@@ -31,7 +31,7 @@
 
 #define WORDSIZE 4
 #define DWORDSIZE 8
-#define CHUNKSIZE (1<<10)
+#define CHUNKSIZE (1<<8)
 #define OVERHEAD 8
 #define MIN_BLK_SIZE 16
 
@@ -57,9 +57,11 @@
 #define PREV_FREE(bp) (*(void **)(bp + WORDSIZE))
 
 static void* free_list_ptr = NULL;
+static unsigned int min_free_size = 99999999;
 
 /* functions */
 static void* find_first_fit(size_t adjusted_size);
+static void* find_best_fit(size_t adjusted_size);
 static void place_and_split_free_blk(void* bp, size_t adjusted_size, size_t free_size);
 static void place_requested_blk(void* bp, size_t adjusted_size);
 static inline size_t allocate_even_number_for_allignment(size_t words);
@@ -108,6 +110,20 @@ static void* find_first_fit(size_t adjusted_size){
 			return bp;
 	}
 	return NULL;
+}
+
+static void* find_best_fit(size_t adjusted_size){
+	void* bp;
+	void* result = NULL;
+	for (bp = free_list_ptr; bp != NULL; bp = NEXT_FREE(bp)){
+		if (GET_SIZE(HEADER_OF_BP(bp)) >= adjusted_size && GET_SIZE(HEADER_OF_BP(bp)) < min_free_size){
+			min_free_size = GET_SIZE(HEADER_OF_BP(bp));
+			result = bp;
+		}
+	}
+	min_free_size = 99999999;
+	return result;
+	
 }
 
 static void place_and_split_free_blk(void* bp, size_t adjusted_size, size_t free_size){
@@ -170,6 +186,7 @@ static void* extend_heap(size_t size){
 
 
 	if ((bp = mem_sbrk(size)) == NULL){
+		printf("why???????????");
 		return NULL;
 	}
 
@@ -188,6 +205,7 @@ int mm_init(void)
     static void* heap_list_ptr = NULL;
 
     if((heap_list_ptr = mem_sbrk(8*WORDSIZE)) == NULL){
+	    printf("why");
 	    return -1;
     }
 
@@ -217,7 +235,7 @@ void *mm_malloc(size_t size)
 
 	adjusted_blk_size = ALIGN(size + OVERHEAD);
 
-	if ((bp = find_first_fit(adjusted_blk_size)) != NULL){
+	if ((bp = find_best_fit(adjusted_blk_size)) != NULL){
 		place_requested_blk(bp, adjusted_blk_size);
 		return bp;
 	}
