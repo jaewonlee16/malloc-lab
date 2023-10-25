@@ -3,7 +3,7 @@
 #
 
 CC = gcc
-CFLAGS = -Wall -Og -m32 -g
+CFLAGS = -Wall -O2 -m32
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 
