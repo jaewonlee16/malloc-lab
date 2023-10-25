@@ -1,13 +1,18 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
- * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
+ * mm.c - malloc implementation using LIFO explicit free lists.
+ * Each block consists or 4byte header and 4 byte footer.
+ * Free blocks have additional block that points to the next and previous free block.
+ * Therefore, the minimum block size is 4 + 4 + 4 + 4 = 16.
+ * It uses best fit search, such that if the free size is same as the malloc size it finds it.
+ * Other than that, it finds the minimum free size that the 
+ * remainder of free block can be splitted (bigger than MIN_BLK_SIZE).
+ * Coalescing is done every time after heap extension, free, and splitting called by malloc or realloc.
+ * Heap extension is implemented by not just extending the requested size.
+ * It looks if previous block is free and merge with it.
+ * The total score is 52 (util) + 40 (throughput) = 92 / 100.
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ * jaewonlee16
+ *
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,9 +70,9 @@ static void* find_first_fit(size_t adjusted_size);
 static void* find_best_fit(size_t adjusted_size);
 static void place_and_split_free_blk(void* bp, size_t adjusted_size, size_t free_size);
 static void place_requested_blk(void* bp, size_t adjusted_size);
-static inline size_t allocate_even_number_for_allignment(size_t words);
 static void* coalesce_free_blk(void* bp);
 static void* extend_heap(size_t words);
+
 
 static void remove_free_from_explicit_list(void* bp){
 	void* next = NEXT_FREE(bp);
@@ -103,7 +108,7 @@ static void add_bp_to_free_list(void* bp){ // LIFO
 	}
 }
 
-
+/* Not used here. Used best fit below. */
 static void* find_first_fit(size_t adjusted_size){
 	void* bp;
 	for (bp = free_list_ptr; bp != NULL; bp = NEXT_FREE(bp)){
@@ -113,6 +118,10 @@ static void* find_first_fit(size_t adjusted_size){
 	return NULL;
 }
 
+/* best fit search.
+ * Immediately returns if free block size is same as requested size.
+ * Finds the free block that has the minimum size, which is second_best_result.
+ * The real best_result is free block that can be splitted. */
 static void* find_best_fit(size_t adjusted_size){
 	void* bp;
 	void* best_result = NULL;
@@ -198,9 +207,17 @@ static void* coalesce_free_blk(void* bp){
 }
 static void* extend_heap(size_t size){
 	char* bp;
+	void* footer_prev = mem_heap_hi() - 0x7;
+	size_t prev_blk_size = GET_SIZE(footer_prev);
+	char * prev = (char*)footer_prev + DWORDSIZE - prev_blk_size;
+	if (!GET_ALLOC(footer_prev) && size > prev_blk_size){ //merge with previous free block
+		mem_sbrk(size - prev_blk_size);
+		remove_free_from_explicit_list(prev);
+		bp = prev;
+	}
 
 
-	if ((bp = mem_sbrk(size)) == NULL){
+	else if ((bp = mem_sbrk(size)) == NULL){
 		printf("why???????????");
 		return NULL;
 	}
@@ -219,22 +236,18 @@ int mm_init(void)
 {
     static void* heap_list_ptr = NULL;
 
-    if((heap_list_ptr = mem_sbrk(8*WORDSIZE)) == NULL){
+    if((heap_list_ptr = mem_sbrk(6*WORDSIZE)) == NULL){
 	    printf("why");
 	    return -1;
     }
+    PUT_VAL_AT_PTR(heap_list_ptr, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue header
+    PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk header
+    PUT_VAL_AT_PTR(heap_list_ptr + 2*WORDSIZE, 0); // NEXT: NULL
+    PUT_VAL_AT_PTR(heap_list_ptr + 3*WORDSIZE, 0); // PREV: NULL
+    PUT_VAL_AT_PTR(heap_list_ptr + 4*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk footer
+    PUT_VAL_AT_PTR(heap_list_ptr + 5*WORDSIZE, CONCAT_SIZE_ALLOC(0, 1)); // epilogue footer
 
-    PUT_VAL_AT_PTR(heap_list_ptr, 0); //padding
-    PUT_VAL_AT_PTR(heap_list_ptr + WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue header
-    PUT_VAL_AT_PTR(heap_list_ptr + 2*WORDSIZE, CONCAT_SIZE_ALLOC(OVERHEAD, 1)); // prologue footer
-    PUT_VAL_AT_PTR(heap_list_ptr + 3*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk header
-    PUT_VAL_AT_PTR(heap_list_ptr + 4*WORDSIZE, 0); // NEXT: NULL
-    PUT_VAL_AT_PTR(heap_list_ptr + 5*WORDSIZE, 0); // PREV: NULL
-    PUT_VAL_AT_PTR(heap_list_ptr + 6*WORDSIZE, CONCAT_SIZE_ALLOC(MIN_BLK_SIZE, 0)); // blk footer
-    PUT_VAL_AT_PTR(heap_list_ptr + 7*WORDSIZE, CONCAT_SIZE_ALLOC(0, 1)); // epilogue footer
-
-    free_list_ptr = heap_list_ptr + 4*WORDSIZE;
-
+    free_list_ptr = heap_list_ptr + 2*WORDSIZE;
     return 0;
 }
 
@@ -275,32 +288,49 @@ void mm_free(void *bp)
 }
 
 /*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * mm_realloc - Implemented by dividing in to cases.
+ * If the requested size is smaller, it uses the same pointer.
+ * If the requested size is bigger and next block is free block,
+ * it uses the same pointer and merges with the next free block.
+ * Both of cases considered free block splitting.
+ * Other than those cases, it is implemented by simply using mm_malloc and mm_free.
  */
 void *mm_realloc(void *oldptr, size_t size)
 {
-    void *newptr;
-    //size_t adjusted_size = ALIGN(size + OVERHEAD);
-    size_t copySize = GET_SIZE(HEADER_OF_BP(oldptr));
+	void *newptr;
+	size_t old_size = GET_SIZE(HEADER_OF_BP(oldptr));
+	size_t adjusted_blk_size = ALIGN(size + OVERHEAD);
+	size_t merged_size = old_size + GET_SIZE(HEADER_OF_BP(NEXT_BLK_PTR(oldptr)));
+	void* bp;
+	if (adjusted_blk_size == old_size)
+		return oldptr;
+	else if (adjusted_blk_size < old_size && (old_size - adjusted_blk_size) >= MIN_BLK_SIZE){
+		PUT_VAL_AT_PTR(HEADER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+		PUT_VAL_AT_PTR(FOOTER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
 
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-      return NULL;
-    memcpy(newptr, oldptr,MIN( copySize,size));
-    mm_free(oldptr);
-    return newptr;
+		bp = NEXT_BLK_PTR(oldptr);
+		PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(old_size - adjusted_blk_size, 0));
+		PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(old_size - adjusted_blk_size, 0));
+		coalesce_free_blk(bp);
+		return oldptr;
+    	}
+	else if (adjusted_blk_size > old_size && !GET_ALLOC(HEADER_OF_BP(NEXT_BLK_PTR(oldptr))) 
+			&& merged_size >= adjusted_blk_size + MIN_BLK_SIZE){
+		remove_free_from_explicit_list(NEXT_BLK_PTR(oldptr));
+      		PUT_VAL_AT_PTR(HEADER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+      		PUT_VAL_AT_PTR(FOOTER_OF_BP(oldptr), CONCAT_SIZE_ALLOC(adjusted_blk_size, 1));
+      		bp = NEXT_BLK_PTR(oldptr);
+      		PUT_VAL_AT_PTR(HEADER_OF_BP(bp), CONCAT_SIZE_ALLOC(merged_size - adjusted_blk_size, 1));
+      		PUT_VAL_AT_PTR(FOOTER_OF_BP(bp), CONCAT_SIZE_ALLOC(merged_size - adjusted_blk_size, 1));
+      		mm_free(bp);
+      		return oldptr;
+	}
+
+    	newptr = mm_malloc(size);
+    	if (newptr == NULL)
+      		return NULL;
+    	memcpy(newptr, oldptr,MIN( old_size,size));
+    	mm_free(oldptr);
+    	return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
